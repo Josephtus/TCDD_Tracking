@@ -116,17 +116,31 @@ async def check_train_tickets(kalkis, varis, tarih, baslangic_saati, bitis_saati
                             bus_koltuk = 0
                             diger_koltuk = 0
 
-                            # Koltukları vagon tiplerine göre ayrı ayrı sayıyoruz
-                            for c in train.get("bookingClassCapacities", []):
-                                cid = c.get("bookingClassId", 0)
-                                cap = c.get("capacity", 0)
+                            # 1. TCDD'nin boş koltukları sakladığı asıl yeri (availableFareInfo) buluyoruz
+                            fare_info_list = train.get("availableFareInfo", [])
+                            cabin_list = []
+                            
+                            if fare_info_list:
+                                # Standart tarife altındaki vagon tiplerini alıyoruz
+                                cabin_list = fare_info_list[0].get("cabinClasses", [])
+                            elif train.get("cabinClassAvailabilities"):
+                                # Bazen API güncellemelerinde burada da dönebiliyor, alternatif olarak ekliyoruz
+                                cabin_list = train.get("cabinClassAvailabilities", [])
+
+                            # 2. Vagonları dönüp boş koltukları topluyoruz
+                            for cabin in cabin_list:
+                                cabin_info = cabin.get("cabinClass", {})
+                                # İsimleri büyük harfe çevirip olası Türkçe karakter farklılıklarını önlüyoruz
+                                cabin_name = str(cabin_info.get("name", "")).strip().upper()
                                 
-                                if cid == 1: # Genelde Ekonomi / Pulman
-                                    eko_koltuk += cap
-                                elif cid in [7, 8]: # Genelde Business
-                                    bus_koltuk += cap
+                                bos_koltuk_sayisi = cabin.get("availabilityCount", 0)
+                                
+                                if "EKONOM" in cabin_name:
+                                    eko_koltuk += bos_koltuk_sayisi
+                                elif "BUS" in cabin_name:
+                                    bus_koltuk += bos_koltuk_sayisi
                                 else:
-                                    diger_koltuk += cap
+                                    diger_koltuk += bos_koltuk_sayisi
 
                             toplam_kapasite = eko_koltuk + bus_koltuk + diger_koltuk
                             
