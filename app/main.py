@@ -66,7 +66,7 @@ async def check_all_active_alarms():
 async def main():
     await init_db()
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(check_all_active_alarms, 'interval', minutes=1)
+    scheduler.add_job(check_all_active_alarms, 'interval', minutes=0.5)
     scheduler.start()
     
     await bot.delete_webhook(drop_pending_updates=True)
