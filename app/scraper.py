@@ -12,7 +12,6 @@ STATION_IDS = {
     "KONYA": 169
 }
 
-# ARTIK MAIN.PY'DEN GELEN TÜM PARAMETRELERİ KABUL EDİYOR
 async def check_train_tickets(kalkis, varis, tarih, baslangic_saati, bitis_saati, yolcu_sayisi, vagon_tipi):
     try:
         dt = datetime.strptime(tarih, "%d.%m.%Y")
@@ -20,7 +19,7 @@ async def check_train_tickets(kalkis, varis, tarih, baslangic_saati, bitis_saati
     except:
         formatted_date = tarih
 
-    # YHT EKLENDİ VE YOLCU SAYISI DİNAMİK YAPILDI
+    # KRİTİK DÜZELTME: Yolcu ID'si tekrar 0 (Tam Bilet / Tüm Koltuklar) yapıldı!
     payload = {
         "blTrainTypes": ["YHT", "ANAHAT", "BOLGESEL", "TURISTIK_TREN"], 
         "passengerTypeCounts": [{"id": 0, "count": yolcu_sayisi}],
@@ -106,20 +105,38 @@ async def check_train_tickets(kalkis, varis, tarih, baslangic_saati, bitis_saati
                 
             data = response_data['data']
             found_trains = []
-            
             tz_tr = timezone(timedelta(hours=3))
             
-            # MATRUŞKA VERİ AYIKLAYICI
             if data and "trainLegs" in data:
                 for leg in data.get("trainLegs", []):
                     for availability in leg.get("trainAvailabilities", []):
                         for train in availability.get("trains", []):
                             
-                            # Toplam kapasiteyi hesapla
-                            toplam_kapasite = sum(c.get("capacity", 0) for c in train.get("bookingClassCapacities", []))
+                            eko_koltuk = 0
+                            bus_koltuk = 0
+                            diger_koltuk = 0
+
+                            # Koltukları vagon tiplerine göre ayrı ayrı sayıyoruz
+                            for c in train.get("bookingClassCapacities", []):
+                                cid = c.get("bookingClassId", 0)
+                                cap = c.get("capacity", 0)
+                                
+                                if cid == 1: # Genelde Ekonomi / Pulman
+                                    eko_koltuk += cap
+                                elif cid in [7, 8]: # Genelde Business
+                                    bus_koltuk += cap
+                                else:
+                                    diger_koltuk += cap
+
+                            toplam_kapasite = eko_koltuk + bus_koltuk + diger_koltuk
                             
-                            # İstenen yolcu sayısından fazla veya eşit koltuk varsa
                             if toplam_kapasite >= yolcu_sayisi:
+                                # Kullanıcının butonlardan seçtiği vagon tipine göre eleme yapıyoruz
+                                if vagon_tipi == "Ekonomi" and eko_koltuk < yolcu_sayisi:
+                                    continue
+                                if vagon_tipi == "Business" and bus_koltuk < yolcu_sayisi:
+                                    continue
+
                                 tren_adi = train.get("commercialName") or train.get("name", "Bilinmeyen Tren")
                                 
                                 saat = "00:00"
@@ -130,14 +147,16 @@ async def check_train_tickets(kalkis, varis, tarih, baslangic_saati, bitis_saati
                                         dt_obj = datetime.fromtimestamp(dep_time_ms / 1000.0, tz=tz_tr)
                                         saat = dt_obj.strftime("%H:%M")
                                 
-                                # SAAT ARALIĞI FİLTRESİ
                                 if not (baslangic_saati <= saat <= bitis_saati):
                                     continue 
+                                
+                                # Telegram mesajına yansıyacak detaylı döküm: "35 (Eko: 35, Bus: 0)"
+                                koltuk_detay = f"{toplam_kapasite} (Eko: {eko_koltuk}, Bus: {bus_koltuk})"
                                 
                                 found_trains.append({
                                     "tren_tipi": tren_adi,
                                     "saat": saat,
-                                    "bos_koltuk": toplam_kapasite,
+                                    "bos_koltuk": koltuk_detay,
                                     "vagon_tipi": vagon_tipi
                                 })
             

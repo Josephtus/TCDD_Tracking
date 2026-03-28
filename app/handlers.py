@@ -27,31 +27,56 @@ def get_task_keyboard(task_id: int, is_active: bool = True):
     builder.adjust(2)
     return builder.as_markup()
 
+# --- 1. ADIM: KALKIŞ GARI (BUTONLU) ---
 @router.message(Command("yeni_alarm"))
 async def cmd_yeni_alarm(message: types.Message, state: FSMContext):
-    await message.answer("🚂 Kalkış garını girin (Örn: ANKARA GAR):")
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Ankara Gar", callback_data="kalkis_ANKARA GAR")
+    builder.button(text="Eskişehir", callback_data="kalkis_ESKİŞEHİR")
+    builder.button(text="İst (Söğütlüçeşme)", callback_data="kalkis_İSTANBUL(SÖĞÜTLÜÇEŞME)")
+    builder.button(text="İst (Pendik)", callback_data="kalkis_İSTANBUL(PENDİK)")
+    builder.button(text="Konya", callback_data="kalkis_KONYA")
+    builder.button(text="Sivas", callback_data="kalkis_SİVAS")
+    builder.adjust(2)
+    
+    await message.answer("🚂 Kalkış garını seçin:", reply_markup=builder.as_markup())
     await state.set_state(AlarmForm.kalkis)
 
-@router.message(AlarmForm.kalkis)
-async def process_kalkis(message: types.Message, state: FSMContext):
-    await state.update_data(kalkis=message.text.upper())
-    await message.answer("🎯 Varış garını girin (Örn: ESKİŞEHİR):")
+# --- 2. ADIM: VARIŞ GARI (BUTONLU) ---
+@router.callback_query(AlarmForm.kalkis, F.data.startswith("kalkis_"))
+async def process_kalkis(callback: types.CallbackQuery, state: FSMContext):
+    kalkis = callback.data.split("_")[1]
+    await state.update_data(kalkis=kalkis)
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Ankara Gar", callback_data="varis_ANKARA GAR")
+    builder.button(text="Eskişehir", callback_data="varis_ESKİŞEHİR")
+    builder.button(text="İst (Söğütlüçeşme)", callback_data="varis_İSTANBUL(SÖĞÜTLÜÇEŞME)")
+    builder.button(text="İst (Pendik)", callback_data="varis_İSTANBUL(PENDİK)")
+    builder.button(text="Konya", callback_data="varis_KONYA")
+    builder.button(text="Sivas", callback_data="varis_SİVAS")
+    builder.adjust(2)
+    
+    await callback.message.edit_text(f"🚂 Kalkış: {kalkis}\n\n🎯 Varış garını seçin:", reply_markup=builder.as_markup())
     await state.set_state(AlarmForm.varis)
 
-@router.message(AlarmForm.varis)
-async def process_varis(message: types.Message, state: FSMContext):
-    await state.update_data(varis=message.text.upper())
+# --- 3. ADIM: TARİH (BUTONLU) ---
+@router.callback_query(AlarmForm.varis, F.data.startswith("varis_"))
+async def process_varis(callback: types.CallbackQuery, state: FSMContext):
+    varis = callback.data.split("_")[1]
+    await state.update_data(varis=varis)
     
-    # Gelecek 6 günü buton olarak hazırla
     builder = InlineKeyboardBuilder()
     for i in range(6):
         date_str = (datetime.now() + timedelta(days=i)).strftime("%d.%m.%Y")
         builder.button(text=date_str, callback_data=f"date_{date_str}")
     builder.adjust(2)
     
-    await message.answer("📅 Tarih seçin:", reply_markup=builder.as_markup())
+    data = await state.get_data()
+    await callback.message.edit_text(f"🚂 Rota: {data['kalkis']} - {varis}\n\n📅 Tarih seçin:", reply_markup=builder.as_markup())
     await state.set_state(AlarmForm.tarih)
 
+# --- 4. ADIM: SAAT ARALIĞI (BUTONLU) ---
 @router.callback_query(AlarmForm.tarih, F.data.startswith("date_"))
 async def process_tarih(callback: types.CallbackQuery, state: FSMContext):
     tarih = callback.data.split("_")[1]
@@ -64,9 +89,10 @@ async def process_tarih(callback: types.CallbackQuery, state: FSMContext):
     builder.button(text="Tüm Gün", callback_data="saat_00:00_23:59")
     builder.adjust(1)
     
-    await callback.message.edit_text(f"📅 Seçilen Tarih: {tarih}\n\n⏰ Hangi saat aralığını takip edelim?", reply_markup=builder.as_markup())
+    await callback.message.edit_text(f"📅 Tarih: {tarih}\n\n⏰ Hangi saat aralığını takip edelim?", reply_markup=builder.as_markup())
     await state.set_state(AlarmForm.saat)
 
+# --- 5. ADIM: VAGON TİPİ (BUTONLU) ---
 @router.callback_query(AlarmForm.saat, F.data.startswith("saat_"))
 async def process_saat(callback: types.CallbackQuery, state: FSMContext):
     _, baslangic, bitis = callback.data.split("_")
@@ -75,13 +101,13 @@ async def process_saat(callback: types.CallbackQuery, state: FSMContext):
     builder = InlineKeyboardBuilder()
     builder.button(text="Ekonomi", callback_data="vagon_Ekonomi")
     builder.button(text="Business", callback_data="vagon_Business")
-    builder.button(text="Loca / Yemekli", callback_data="vagon_Loca")
     builder.button(text="Fark Etmez", callback_data="vagon_Farketmez")
     builder.adjust(2)
     
     await callback.message.edit_text(f"⏰ Saat: {baslangic} - {bitis}\n\n💺 Vagon tipi seçin:", reply_markup=builder.as_markup())
     await state.set_state(AlarmForm.vagon)
 
+# --- 6. ADIM: YOLCU SAYISI VE KAYIT ---
 @router.callback_query(AlarmForm.vagon, F.data.startswith("vagon_"))
 async def process_vagon(callback: types.CallbackQuery, state: FSMContext):
     vagon = callback.data.split("_")[1]
