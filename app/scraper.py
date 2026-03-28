@@ -116,29 +116,61 @@ async def check_train_tickets(kalkis, varis, tarih, baslangic_saati, bitis_saati
                             bus_koltuk = 0
                             diger_koltuk = 0
 
-                            # 1. TCDD'nin boş koltukları sakladığı asıl yeri (availableFareInfo) buluyoruz
-                            fare_info_list = train.get("availableFareInfo", [])
-                            cabin_list = []
+                            # YHT trenleri boş koltukları "availableFareInfo" içine,
+                            # ANAHAT trenleri ise "cabinClassAvailabilities" içine saklıyor.
+                            # İki listeyi de toplayıp, aynı vagonu 2 kez saymamak için ID bazlı set kullanıyoruz.
                             
-                            if fare_info_list:
-                                # Standart tarife altındaki vagon tiplerini alıyoruz
-                                cabin_list = fare_info_list[0].get("cabinClasses", [])
-                            elif train.get("cabinClassAvailabilities"):
-                                # Bazen API güncellemelerinde burada da dönebiliyor, alternatif olarak ekliyoruz
-                                cabin_list = train.get("cabinClassAvailabilities", [])
+                            vagon_listesi = []
+                            islenen_vagon_idleri = set()
 
-                            # 2. Vagonları dönüp boş koltukları topluyoruz
-                            for cabin in cabin_list:
+                            # 1. YHT bilet listesini listeye ekle
+                            fare_info_list = train.get("availableFareInfo", [])
+                            if fare_info_list:
+                                vagon_listesi.extend(fare_info_list[0].get("cabinClasses", []))
+                                
+                            # 2. ANAHAT bilet listesini listeye ekle
+                            vagon_listesi.extend(train.get("cabinClassAvailabilities", []))
+
+                            for cabin in vagon_listesi:
+                                # Eğer liste içi boş obje ({}) ise atla
+                                if not isinstance(cabin, dict):
+                                    continue
+                                    
                                 cabin_info = cabin.get("cabinClass", {})
-                                # İsimleri büyük harfe çevirip olası Türkçe karakter farklılıklarını önlüyoruz
-                                cabin_name = str(cabin_info.get("name", "")).strip().upper()
+                                c_id = cabin_info.get("id")
                                 
+                                # Çifte sayım koruması: Bu vagon ID'sini önceden saydıysak geç
+                                if c_id is not None:
+                                    if c_id in islenen_vagon_idleri:
+                                        continue
+                                    islenen_vagon_idleri.add(c_id)
+
                                 bos_koltuk_sayisi = cabin.get("availabilityCount", 0)
+                                if bos_koltuk_sayisi <= 0:
+                                    continue
+
+                                # İsim bulma aşaması
+                                cabin_name = str(cabin_info.get("name", "")).upper()
                                 
-                                if "EKONOM" in cabin_name:
-                                    eko_koltuk += bos_koltuk_sayisi
-                                elif "BUS" in cabin_name:
+                                # YHT'lerde isim null geldiği için alt listelere inip gerçek isme bakıyoruz
+                                if not cabin_name or cabin_name == "NONE":
+                                    booking_availabilities = cabin.get("bookingClassAvailabilities", [])
+                                    if booking_availabilities:
+                                        bc_info = booking_availabilities[0].get("bookingClass", {})
+                                        cabin_name = str(bc_info.get("name", "")).upper()
+
+                                # Hala isimsizse TCDD ID'sinden son çare tahmini
+                                if not cabin_name or cabin_name == "NONE":
+                                    if c_id == 1:
+                                        cabin_name = "BUSİNESS"
+                                    elif c_id in [2, 3]:
+                                        cabin_name = "EKONOMİ"
+
+                                # Kategorize et
+                                if "BUS" in cabin_name:
                                     bus_koltuk += bos_koltuk_sayisi
+                                elif "EKONOM" in cabin_name or "PULMAN" in cabin_name or "STANDART" in cabin_name:
+                                    eko_koltuk += bos_koltuk_sayisi
                                 else:
                                     diger_koltuk += bos_koltuk_sayisi
 
