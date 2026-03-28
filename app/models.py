@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey
-from .database import Base
+from database import Base
 import datetime
 
 class User(Base):
@@ -19,8 +19,10 @@ class Task(Base):
     kalkis_gar = Column(String(100))
     varis_gar = Column(String(100))
     tarih = Column(String(20))
-    baslangic_saati = Column(String(10)) 
-    bitis_saati = Column(String(10))
+    baslangic_saati = Column(String(10), default="00:00") 
+    bitis_saati = Column(String(10), default="23:59")
+    vagon_tipi = Column(String(50), default="Fark Etmez")
+    yolcu_sayisi = Column(Integer, default=1)
     
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)

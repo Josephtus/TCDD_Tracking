@@ -1,59 +1,29 @@
-import requests
 import logging
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from playwright.async_api import async_playwright
 import asyncio
 
-# EKRAN GÖRÜNTÜSÜNDEN GELEN YENİ NESİL ID'LER
 STATION_IDS = {
     "ANKARA GAR": 98,
     "ESKİŞEHİR": 93,
     "İSTANBUL(SÖĞÜTLÜÇEŞME)": 234,
-    "İSTANBUL(PENDİK)": 250
+    "İSTANBUL(PENDİK)": 250,
+    "SİVAS": 298,
+    "KONYA": 169
 }
 
-async def get_fresh_token():
-    """Yeni nesil Bearer Token'ı Playwright ile ağdan yakalar."""
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=['--no-sandbox'])
-        page = await browser.new_page()
-        token = None
-
-        async def intercept(request):
-            nonlocal token
-            auth = request.headers.get("authorization")
-            if auth and "bearer" in auth.lower():
-                token = auth
-
-        page.on("request", intercept)
-        try:
-            # Siteye git ve Token üretilmesi için sayfayı biraz beklet
-            await page.goto("https://ebilet.tcddtasimacilik.gov.tr/", wait_until="networkidle")
-            await asyncio.sleep(5) 
-        except: pass
-        await browser.close()
-        return token
-
-async def check_train_tickets(kalkis, varis, tarih):
-    token = await get_fresh_token()
-    if not token:
-        logging.error("❌ Token yakalanamadı!")
-        return []
-
-    # EKRAN GÖRÜNTÜSÜNDEKİ YENİ API ADRESİ
-    url = "https://web-api-prod-ytp.tcddtasimacilik.gov.tr/tms/train/train-availability?environment=dev&userId=1"
-    
-    # Tarih formatını ekran görüntüsündeki gibi ayarla: 27-03-2026 21:00:00
+# ARTIK MAIN.PY'DEN GELEN TÜM PARAMETRELERİ KABUL EDİYOR
+async def check_train_tickets(kalkis, varis, tarih, baslangic_saati, bitis_saati, yolcu_sayisi, vagon_tipi):
     try:
         dt = datetime.strptime(tarih, "%d.%m.%Y")
         formatted_date = dt.strftime("%d-%m-%Y 00:00:00")
     except:
         formatted_date = tarih
 
-    # EKRAN GÖRÜNTÜSÜNDEKİ TAM PAYLOAD YAPISI
+    # YHT EKLENDİ VE YOLCU SAYISI DİNAMİK YAPILDI
     payload = {
-        "blTrainTypes": ["TURISTIK_TREN", "TURISTIK_TREN"], # Görüntüdeki gibi
-        "passengerTypeCounts": [{"id": 0, "count": 1}],
+        "blTrainTypes": ["YHT", "ANAHAT", "BOLGESEL", "TURISTIK_TREN"], 
+        "passengerTypeCounts": [{"id": 0, "count": yolcu_sayisi}],
         "searchReservation": False,
         "searchRoutes": [{
             "departureStationId": STATION_IDS.get(kalkis.upper(), 98),
@@ -65,30 +35,116 @@ async def check_train_tickets(kalkis, varis, tarih):
         "searchType": "DOMESTIC"
     }
 
-    headers = {
-        "Authorization": token,
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0"
-    }
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=True, 
+            args=[
+                '--no-sandbox', 
+                '--disable-setuid-sandbox', 
+                '--disable-blink-features=AutomationControlled',
+                '--ignore-certificate-errors'
+            ]
+        )
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            viewport={'width': 1920, 'height': 1080}
+        )
+        await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        
+        page = await context.new_page()
+        token = None
+        cloned_headers = {}
 
-    try:
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(None, lambda: requests.post(url, json=payload, headers=headers, timeout=15))
-        data = response.json()
+        async def intercept(request):
+            nonlocal token, cloned_headers
+            if "tcddtasimacilik.gov.tr" in request.url:
+                auth = request.headers.get("authorization")
+                if auth and "eyJ" in auth and not token:
+                    token = auth
+                    cloned_headers = request.headers
 
-        # Yeni API'nin JSON yapısına göre biletleri ayıkla
-        found_trains = []
-        # Not: Yeni API yapısında 'trainAvailabilityList' gibi farklı anahtarlar olabilir
-        # Bu kısım gelen JSON'a göre gerekirse güncellenir
-        if "trainAvailabilityList" in data:
-            for train in data["trainAvailabilityList"]:
-                if train.get("totalAvailability", 0) > 0:
-                    found_trains.append({
-                        "tren_tipi": train.get("trainName"),
-                        "saat": train.get("departureDate"),
-                        "bos_koltuk": train.get("totalAvailability")
-                    })
-        return found_trains
-    except Exception as e:
-        logging.error(f"📡 Yeni API Hatası: {e}")
-        return []
+        page.on("request", intercept)
+        
+        try:
+            logging.info("🌐 TCDD sitesine bağlanılıyor...")
+            await page.goto("https://ebilet.tcddtasimacilik.gov.tr/", wait_until="networkidle", timeout=30000)
+            
+            for _ in range(10):
+                if token:
+                    break
+                await asyncio.sleep(1)
+
+            if not token:
+                logging.error("❌ Token yakalanamadı!")
+                return []
+            
+            logging.info("✅ Token alındı, API sorgusu yapılıyor...")
+            url = "https://web-api-prod-ytp.tcddtasimacilik.gov.tr/tms/train/train-availability?environment=dev&userId=1"
+            
+            response_data = await page.evaluate('''async ([api_url, req_payload, headers_dict]) => {
+                let finalHeaders = { ...headers_dict };
+                finalHeaders['Content-Type'] = 'application/json';
+                finalHeaders['Accept'] = 'application/json, text/plain, */*';
+                delete finalHeaders['content-length'];
+                delete finalHeaders['host'];
+                delete finalHeaders['origin'];
+
+                const response = await fetch(api_url, {
+                    method: 'POST',
+                    headers: finalHeaders,
+                    body: JSON.stringify(req_payload)
+                });
+                return {
+                    status: response.status,
+                    data: await response.json().catch(() => null)
+                };
+            }''', [url, payload, cloned_headers])
+
+            if response_data['status'] != 200:
+                logging.error(f"❌ API Hatası (HTTP {response_data['status']})")
+                return []
+                
+            data = response_data['data']
+            found_trains = []
+            
+            tz_tr = timezone(timedelta(hours=3))
+            
+            # MATRUŞKA VERİ AYIKLAYICI
+            if data and "trainLegs" in data:
+                for leg in data.get("trainLegs", []):
+                    for availability in leg.get("trainAvailabilities", []):
+                        for train in availability.get("trains", []):
+                            
+                            # Toplam kapasiteyi hesapla
+                            toplam_kapasite = sum(c.get("capacity", 0) for c in train.get("bookingClassCapacities", []))
+                            
+                            # İstenen yolcu sayısından fazla veya eşit koltuk varsa
+                            if toplam_kapasite >= yolcu_sayisi:
+                                tren_adi = train.get("commercialName") or train.get("name", "Bilinmeyen Tren")
+                                
+                                saat = "00:00"
+                                segments = train.get("segments", [])
+                                if segments:
+                                    dep_time_ms = segments[0].get("departureTime")
+                                    if dep_time_ms:
+                                        dt_obj = datetime.fromtimestamp(dep_time_ms / 1000.0, tz=tz_tr)
+                                        saat = dt_obj.strftime("%H:%M")
+                                
+                                # SAAT ARALIĞI FİLTRESİ
+                                if not (baslangic_saati <= saat <= bitis_saati):
+                                    continue 
+                                
+                                found_trains.append({
+                                    "tren_tipi": tren_adi,
+                                    "saat": saat,
+                                    "bos_koltuk": toplam_kapasite,
+                                    "vagon_tipi": vagon_tipi
+                                })
+            
+            return found_trains
+
+        except Exception as e:
+            logging.error(f"📡 Sistem hatası: {e}")
+            return []
+        finally:
+            await browser.close()
