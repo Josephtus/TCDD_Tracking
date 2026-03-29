@@ -1,8 +1,20 @@
+# ─── Telegram Bot Framework ───────────────────────────
 aiogram==3.4.1
+
+# ─── Database ─────────────────────────────────────────
 SQLAlchemy==2.0.27
 asyncmy==0.2.9
-cryptography==42.0.5  # Bu satırı ekleyin veya güncelleyin
-requests==2.31.0
+cryptography==42.0.5
+
+# ─── HTTP / Async ─────────────────────────────────────
+aiohttp==3.9.5          # Hafif HTTP istemcisi (artık Playwright yerine bilet sorgusu için)
+
+# ─── Scheduler ────────────────────────────────────────
 apscheduler==3.10.4
+
+# ─── Utilities ────────────────────────────────────────
 python-dotenv==1.0.1
+requests==2.31.0        # Senkron yardımcı araçlar (get_stations.py gibi) için
+
+# ─── Browser Automation (sadece token yenileme için) ──
 playwright==1.42.0

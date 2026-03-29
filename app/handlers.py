@@ -1,6 +1,7 @@
 import re
 import calendar
 import json
+import logging
 import os
 from aiogram import Router, F, types
 from aiogram.filters import Command
@@ -12,7 +13,69 @@ from sqlalchemy import select
 from datetime import datetime, timedelta
 
 from database import AsyncSessionLocal
-from models import Task
+from models import Task, User
+
+logger = logging.getLogger(__name__)
+
+ADMIN_TELEGRAM_ID = str(os.getenv("ADMIN_TELEGRAM_ID", ""))
+
+
+async def get_or_create_user(telegram_user: types.User) -> User:
+    """Kullanıcıyı DB'den çeker; yoksa pending olarak kaydeder."""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(User).where(User.telegram_id == str(telegram_user.id))
+        )
+        user = result.scalar_one_or_none()
+        if not user:
+            user = User(
+                telegram_id=str(telegram_user.id),
+                username=telegram_user.username,
+                full_name=telegram_user.full_name,
+                status="pending",
+                is_admin=(str(telegram_user.id) == ADMIN_TELEGRAM_ID),
+            )
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+        return user
+
+
+async def check_access(message_or_callback) -> tuple[bool, User | None]:
+    """
+    Kullanıcının erişim hakkı var mı kontrol eder.
+    Admin her zaman erişebilir.
+    Dönüş: (erişim_var_mı, user_nesnesi)
+    """
+    if isinstance(message_or_callback, types.Message):
+        tg_user = message_or_callback.from_user
+        reply   = message_or_callback.answer
+    else:  # CallbackQuery
+        tg_user = message_or_callback.from_user
+        reply   = message_or_callback.message.answer
+
+    # Admin her zaman geçer
+    if str(tg_user.id) == ADMIN_TELEGRAM_ID:
+        # Admin için de user kaydı oluştur (ilk seferde)
+        user = await get_or_create_user(tg_user)
+        return True, user
+
+    user = await get_or_create_user(tg_user)
+
+    if user.status == "approved":
+        return True, user
+    elif user.status == "pending":
+        await reply(
+            "⏳ <b>Erişim talebiniz admin onayı bekliyor.</b>\n"
+            "Onaylandığınızda bildirim alacaksınız.",
+            parse_mode="HTML",
+        )
+    elif user.status == "rejected":
+        await reply("❌ Erişim talebiniz reddedildi.")
+    elif user.status == "blocked":
+        await reply("🚫 Hesabınız engellendi. Yöneticiye başvurun.")
+
+    return False, user
 
 router = Router()
 
@@ -110,6 +173,15 @@ async def finalize_alarm(callback: types.CallbackQuery, state: FSMContext):
     yolcu = data.get('yolcu')
     editing_task_id = data.get("editing_task_id")
 
+    # Kullanıcı DB kaydını çek (user_id için)
+    tg_user = callback.from_user
+    async with AsyncSessionLocal() as session:
+        u_result = await session.execute(
+            select(User).where(User.telegram_id == str(tg_user.id))
+        )
+        db_user = u_result.scalar_one_or_none()
+        db_user_id = db_user.id if db_user else None
+
     async with AsyncSessionLocal() as session:
         if editing_task_id:
             task = await session.get(Task, editing_task_id)
@@ -129,6 +201,7 @@ async def finalize_alarm(callback: types.CallbackQuery, state: FSMContext):
 
         if not editing_task_id:
             new_task = Task(
+                user_id=db_user_id,
                 kalkis_gar=data['kalkis'], varis_gar=data['varis'],
                 tarih=data['tarih'], baslangic_saati=data['baslangic'],
                 bitis_saati=data['bitis'], vagon_tipi=data['vagon'],
@@ -175,6 +248,9 @@ async def show_kalkis(message_or_callback, state: FSMContext, is_edit_single=Fal
 
 @router.message(Command("yeni_alarm"))
 async def cmd_yeni_alarm(message: types.Message, state: FSMContext):
+    ok, _ = await check_access(message)
+    if not ok:
+        return
     await state.clear()
     await show_kalkis(message, state)
 
@@ -236,9 +312,7 @@ async def show_varis(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(f"🚂 Kalkış: {kalkis}\n\n🎯 Varış garını seçin:", reply_markup=builder.as_markup())
     await state.set_state(AlarmForm.varis)
 
-@router.callback_query(F.data == "back_varis")
-async def back_varis(callback: types.CallbackQuery, state: FSMContext):
-    await show_varis(callback, state)
+
 
 @router.callback_query(AlarmForm.varis, F.data == "varis_diger")
 async def varis_diger(callback: types.CallbackQuery, state: FSMContext):
@@ -511,6 +585,9 @@ async def _list_alarms(message: types.Message):
 
 @router.message(Command("alarmlar"))
 async def cmd_alarmlar(message: types.Message):
+    ok, _ = await check_access(message)
+    if not ok:
+        return
     await _list_alarms(message)
 
 # ─────────────────────────────────────────────────────────────
