@@ -21,6 +21,11 @@ if os.path.exists("app/station_dict.json"):
     with open("app/station_dict.json", "r", encoding="utf-8") as f:
         STATION_LIST = list(json.load(f).keys())
 
+def normalize_tr(text: str) -> str:
+    """Türkçe i/İ/ı/I harflerini eşitleyerek küçük harfe çevirir."""
+    tr_map = str.maketrans("İIı", "iii")
+    return text.translate(tr_map).lower()
+
 class AlarmForm(StatesGroup):
     edit_menu = State()
     kalkis = State()
@@ -178,19 +183,30 @@ async def back_kalkis(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     await show_kalkis(callback, state, is_edit_single=(data.get("edit_single") == "rota"))
 
+@router.callback_query(F.data == "back_varis")
+async def back_varis(callback: types.CallbackQuery, state: FSMContext):
+    await show_varis(callback, state)
+
 @router.callback_query(AlarmForm.kalkis, F.data == "kalkis_diger")
 async def kalkis_diger(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.edit_text("🔍 Kalkış istasyonu adını yazın (ör: Konya, Sivas, Kars):")
+    builder = InlineKeyboardBuilder()
+    builder.button(text="⬅️ Geri", callback_data="back_kalkis")
+    await callback.message.edit_text(
+        "🔍 Kalkış istasyonu adını yazın\n(ör: Konya, Sivas, Kars...):",
+        reply_markup=builder.as_markup()
+    )
     await state.set_state(AlarmForm.kalkis_diger)
 
 @router.message(AlarmForm.kalkis_diger)
 async def process_kalkis_diger_search(message: types.Message, state: FSMContext):
-    query = message.text.upper()
-    matches = sorted([s for s in STATION_LIST if query in s])[:10]
-    if not matches:
-        await message.answer("❌ Eşleşen istasyon bulunamadı. Başka bir isim yazın:")
-        return
+    query = message.text
+    matches = sorted([s for s in STATION_LIST if normalize_tr(query) in normalize_tr(s)])[:10]
     builder = InlineKeyboardBuilder()
+    if not matches:
+        builder.button(text="⬅️ Geri", callback_data="back_kalkis")
+        builder.adjust(1)
+        await message.answer("❌ Eşleşen istasyon bulunamadı. Başka bir isim yazın:", reply_markup=builder.as_markup())
+        return
     for m in matches:
         builder.button(text=m, callback_data=f"kalkis_{m}")
     builder.button(text="⬅️ Geri", callback_data="back_kalkis")
@@ -226,19 +242,26 @@ async def back_varis(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(AlarmForm.varis, F.data == "varis_diger")
 async def varis_diger(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.edit_text("🔍 Varış istasyonu adını yazın (ör: Karaman, Eskişehir):")
+    builder = InlineKeyboardBuilder()
+    builder.button(text="⬅️ Geri", callback_data="back_varis")
+    await callback.message.edit_text(
+        "🔍 Varış istasyonu adını yazın\n(ör: Karaman, Eskişehir...):",
+        reply_markup=builder.as_markup()
+    )
     await state.set_state(AlarmForm.varis_diger)
 
 @router.message(AlarmForm.varis_diger)
 async def process_varis_diger_search(message: types.Message, state: FSMContext):
-    query = message.text.upper()
+    query = message.text
     data = await state.get_data()
     kalkis = data.get('kalkis', "")
-    matches = sorted([s for s in STATION_LIST if query in s and s != kalkis])[:10]
-    if not matches:
-        await message.answer("❌ Eşleşen istasyon bulunamadı. Başka bir isim yazın:")
-        return
+    matches = sorted([s for s in STATION_LIST if normalize_tr(query) in normalize_tr(s) and s != kalkis])[:10]
     builder = InlineKeyboardBuilder()
+    if not matches:
+        builder.button(text="⬅️ Geri", callback_data="back_varis")
+        builder.adjust(1)
+        await message.answer("❌ Eşleşen istasyon bulunamadı. Başka bir isim yazın:", reply_markup=builder.as_markup())
+        return
     for m in matches:
         builder.button(text=m, callback_data=f"varis_{m}")
     builder.button(text="⬅️ Geri", callback_data="back_varis")
