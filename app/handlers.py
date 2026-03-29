@@ -253,6 +253,16 @@ async def cmd_yeni_alarm(message: types.Message, state: FSMContext):
         return
     await state.clear()
     await show_kalkis(message, state)
+    
+# ----- AŞAĞIDAKİ BLOĞU YENİ EKLEYECEKSİN -----
+@router.callback_query(F.data == "start_yeni_alarm")
+async def cb_yeni_alarm(callback: types.CallbackQuery, state: FSMContext):
+    ok, _ = await check_access(callback) # check_access callback'leri de destekliyor
+    if not ok:
+        return
+    await state.clear()
+    await show_kalkis(callback, state)
+# ---------------------------------------------
 
 @router.callback_query(F.data == "back_kalkis")
 async def back_kalkis(callback: types.CallbackQuery, state: FSMContext):

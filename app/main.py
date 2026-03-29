@@ -57,12 +57,18 @@ async def cmd_start(message: types.Message):
     # Admin ise direkt karşıla
     if str(tg_user.id) == ADMIN_TELEGRAM_ID:
         await get_or_create_user(tg_user)   # DB'ye kaydet (ilk seferde)
+        
+        builder = InlineKeyboardBuilder()
+        builder.button(text="➕ Yeni Alarm Kur", callback_data="start_yeni_alarm")
+        builder.button(text="📋 Alarmlarım", callback_data="alarmlar_menu")
+        builder.adjust(2) # Butonları yan yana dizer
+        
         await message.answer(
-            "👋 Hoş geldin Patron! 🚂\n"
-            "━━━━━━━━━━━━━━━━\n"
-            "📋 /alarmlar → Alarmlarını gör\n"
-            "➕ /yeni_alarm → Yeni alarm kur\n"
-            "🛡️ /admin_panel <şifre> → Admin paneli"
+            "👋 <b>Hoş geldin Patron!</b> 🚂\n\n"
+            "Aşağıdaki butonları kullanarak işlemlerini hızlıca yapabilirsin.\n"
+            "<i>(Admin paneli için /admin_panel &lt;şifre&gt; komutunu kullanmaya devam edebilirsin)</i>",
+            parse_mode="HTML",
+            reply_markup=builder.as_markup()
         )
         return
 
@@ -70,10 +76,16 @@ async def cmd_start(message: types.Message):
     user = await get_or_create_user(tg_user)
 
     if user.status == "approved":
+        builder = InlineKeyboardBuilder()
+        builder.button(text="➕ Yeni Alarm Kur", callback_data="start_yeni_alarm")
+        builder.button(text="📋 Alarmlarım", callback_data="alarmlar_menu")
+        builder.adjust(2) # Butonları yan yana dizer
+
         await message.answer(
-            "👋 Hoş geldiniz!\n"
-            "📋 /alarmlar → Alarmlarınızı görün\n"
-            "➕ /yeni_alarm → Yeni alarm kurun"
+            "👋 <b>TCDD Takip Botuna Hoş Geldiniz!</b> 🚂\n\n"
+            "Aşağıdaki menüden yapmak istediğiniz işlemi seçebilirsiniz:",
+            parse_mode="HTML",
+            reply_markup=builder.as_markup()
         )
         return
 
