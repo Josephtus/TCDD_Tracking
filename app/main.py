@@ -7,10 +7,9 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
-
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
-
+from middlewares import ThrottlingMiddleware
 from database import init_db, AsyncSessionLocal
 from handlers import router, get_or_create_user
 from admin_handlers import admin_router
@@ -43,6 +42,8 @@ logger = logging.getLogger(__name__)
 
 bot = Bot(token=BOT_TOKEN)
 dp  = Dispatcher()
+dp.message.middleware(ThrottlingMiddleware(limit=1.5))
+dp.callback_query.middleware(ThrottlingMiddleware(limit=1.5))
 dp.include_router(admin_router)   # Admin router önce — öncelik sırası önemli
 dp.include_router(router)
 
