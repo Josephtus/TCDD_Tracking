@@ -2,15 +2,23 @@ import logging
 from datetime import datetime, timezone, timedelta
 from playwright.async_api import async_playwright
 import asyncio
+import json
+import os
 
 STATION_IDS = {
     "ANKARA GAR": 98,
     "ESKİŞEHİR": 93,
-    "İSTANBUL(SÖĞÜTLÜÇEŞME)": 234,
-    "İSTANBUL(PENDİK)": 250,
-    "SİVAS": 298,
-    "KONYA": 169
+    "İSTANBUL(SÖĞÜTLÜÇEŞME)": 1325,
+    "İSTANBUL(PENDİK)": 48,
+    "SİVAS": 566,
+    "KONYA": 796,
+    "ERYAMAN YHT": 1306,
 }
+try:
+    with open("app/station_dict.json", "r", encoding="utf-8") as f:
+        STATION_IDS.update(json.load(f))
+except Exception as e:
+    logging.warning(f"station_dict.json yüklenemedi: {e}")
 
 async def check_train_tickets(kalkis, varis, tarih, baslangic_saati, bitis_saati, yolcu_sayisi, vagon_tipi):
     try:
@@ -19,11 +27,7 @@ async def check_train_tickets(kalkis, varis, tarih, baslangic_saati, bitis_saati
     except:
         formatted_date = tarih
 
-    # KRİTİK DÜZELTME: Yolcu ID'si tekrar 0 (Tam Bilet / Tüm Koltuklar) yapıldı!
     payload = {
-        "blTrainTypes": ["YHT", "ANAHAT", "BOLGESEL", "TURISTIK_TREN"], 
-        "passengerTypeCounts": [{"id": 0, "count": yolcu_sayisi}],
-        "searchReservation": False,
         "searchRoutes": [{
             "departureStationId": STATION_IDS.get(kalkis.upper(), 98),
             "departureStationName": kalkis.upper(),
@@ -31,15 +35,17 @@ async def check_train_tickets(kalkis, varis, tarih, baslangic_saati, bitis_saati
             "arrivalStationName": varis.upper(),
             "departureDate": formatted_date
         }],
-        "searchType": "DOMESTIC"
+        "passengerTypeCounts": [{"id": 0, "count": yolcu_sayisi}],
+        "searchReservation": False,
+        "blTrainTypes": ["TURISTIK_TREN"],
     }
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(
-            headless=True, 
+            headless=True,
             args=[
-                '--no-sandbox', 
-                '--disable-setuid-sandbox', 
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
                 '--disable-blink-features=AutomationControlled',
                 '--ignore-certificate-errors'
             ]
@@ -49,7 +55,7 @@ async def check_train_tickets(kalkis, varis, tarih, baslangic_saati, bitis_saati
             viewport={'width': 1920, 'height': 1080}
         )
         await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        
+
         page = await context.new_page()
         token = None
         cloned_headers = {}
@@ -63,11 +69,10 @@ async def check_train_tickets(kalkis, varis, tarih, baslangic_saati, bitis_saati
                     cloned_headers = request.headers
 
         page.on("request", intercept)
-        
+
         try:
-            logging.info("🌐 TCDD sitesine bağlanılıyor...")
             await page.goto("https://ebilet.tcddtasimacilik.gov.tr/", wait_until="networkidle", timeout=30000)
-            
+
             for _ in range(10):
                 if token:
                     break
@@ -76,10 +81,9 @@ async def check_train_tickets(kalkis, varis, tarih, baslangic_saati, bitis_saati
             if not token:
                 logging.error("❌ Token yakalanamadı!")
                 return []
-            
-            logging.info("✅ Token alındı, API sorgusu yapılıyor...")
+
             url = "https://web-api-prod-ytp.tcddtasimacilik.gov.tr/tms/train/train-availability?environment=dev&userId=1"
-            
+
             response_data = await page.evaluate('''async ([api_url, req_payload, headers_dict]) => {
                 let finalHeaders = { ...headers_dict };
                 finalHeaders['Content-Type'] = 'application/json';
@@ -102,110 +106,109 @@ async def check_train_tickets(kalkis, varis, tarih, baslangic_saati, bitis_saati
             if response_data['status'] != 200:
                 logging.error(f"❌ API Hatası (HTTP {response_data['status']})")
                 return []
-                
+
             data = response_data['data']
             found_trains = []
             tz_tr = timezone(timedelta(hours=3))
-            
+
             if data and "trainLegs" in data:
                 for leg in data.get("trainLegs", []):
                     for availability in leg.get("trainAvailabilities", []):
                         for train in availability.get("trains", []):
-                            
+
                             eko_koltuk = 0
                             bus_koltuk = 0
                             diger_koltuk = 0
+                            fiyat_eko = 0
+                            fiyat_bus = 0
+                            sinif_koltuk_sayilari = {}
 
-                            # YHT trenleri boş koltukları "availableFareInfo" içine,
-                            # ANAHAT trenleri ise "cabinClassAvailabilities" içine saklıyor.
-                            # İki listeyi de toplayıp, aynı vagonu 2 kez saymamak için ID bazlı set kullanıyoruz.
-                            
-                            vagon_listesi = []
-                            islenen_vagon_idleri = set()
-
-                            # 1. YHT bilet listesini listeye ekle
-                            fare_info_list = train.get("availableFareInfo", [])
-                            if fare_info_list:
-                                vagon_listesi.extend(fare_info_list[0].get("cabinClasses", []))
-                                
-                            # 2. ANAHAT bilet listesini listeye ekle
-                            vagon_listesi.extend(train.get("cabinClassAvailabilities", []))
-
-                            for cabin in vagon_listesi:
-                                # Eğer liste içi boş obje ({}) ise atla
-                                if not isinstance(cabin, dict):
-                                    continue
-                                    
-                                cabin_info = cabin.get("cabinClass", {})
-                                c_id = cabin_info.get("id")
-                                
-                                # Çifte sayım koruması: Bu vagon ID'sini önceden saydıysak geç
-                                if c_id is not None:
-                                    if c_id in islenen_vagon_idleri:
+                            for car in train.get("cars", []):
+                                for avail in car.get("availabilities", []):
+                                    bos_koltuk_sayisi = avail.get("availability", 0)
+                                    if bos_koltuk_sayisi <= 0:
                                         continue
-                                    islenen_vagon_idleri.add(c_id)
 
-                                bos_koltuk_sayisi = cabin.get("availabilityCount", 0)
-                                if bos_koltuk_sayisi <= 0:
-                                    continue
+                                    c_info = avail.get("cabinClass")
+                                    cabin_name = ""
+                                    if c_info:
+                                        cabin_name = str(c_info.get("name", "")).upper()
 
-                                # İsim bulma aşaması
-                                cabin_name = str(cabin_info.get("name", "")).upper()
-                                
-                                # YHT'lerde isim null geldiği için alt listelere inip gerçek isme bakıyoruz
-                                if not cabin_name or cabin_name == "NONE":
-                                    booking_availabilities = cabin.get("bookingClassAvailabilities", [])
-                                    if booking_availabilities:
-                                        bc_info = booking_availabilities[0].get("bookingClass", {})
-                                        cabin_name = str(bc_info.get("name", "")).upper()
+                                    plist = avail.get("pricingList", [])
+                                    if not cabin_name or cabin_name == "NONE":
+                                        if plist:
+                                            bcl = plist[0].get("bookingClass", {})
+                                            cabin_name = str(bcl.get("name", "")).upper()
 
-                                # Hala isimsizse TCDD ID'sinden son çare tahmini
-                                if not cabin_name or cabin_name == "NONE":
-                                    if c_id == 1:
-                                        cabin_name = "BUSİNESS"
-                                    elif c_id in [2, 3]:
-                                        cabin_name = "EKONOMİ"
+                                    price_val = 0
+                                    if plist:
+                                        price_val = (plist[0].get("crudePrice", {}) or {}).get("priceAmount") or \
+                                                    (plist[0].get("basePrice", {}) or {}).get("priceAmount", 0)
 
-                                # Kategorize et
-                                if "BUS" in cabin_name:
-                                    bus_koltuk += bos_koltuk_sayisi
-                                elif "EKONOM" in cabin_name or "PULMAN" in cabin_name or "STANDART" in cabin_name:
-                                    eko_koltuk += bos_koltuk_sayisi
-                                else:
-                                    diger_koltuk += bos_koltuk_sayisi
+                                    display_name = cabin_name.title()
+                                    if "YATAKL" in cabin_name:                display_name = "Yataklı"
+                                    elif "PULMAN" in cabin_name:              display_name = "Pulman"
+                                    elif "LOCA" in cabin_name:               display_name = "Loca"
+                                    elif "BUS" in cabin_name:                display_name = "Business"
+                                    elif "TEKERLEKLİ" in cabin_name or "ENGELLİ" in cabin_name:
+                                                                              display_name = "Tek. Sandalye"
+                                    elif "EKONOM" in cabin_name or "EKO" in cabin_name or "STANDART" in cabin_name:
+                                                                              display_name = "Ekonomi"
+
+                                    sinif_koltuk_sayilari[display_name] = sinif_koltuk_sayilari.get(display_name, 0) + bos_koltuk_sayisi
+
+                                    if "BUS" in cabin_name:
+                                        bus_koltuk += bos_koltuk_sayisi
+                                        if not fiyat_bus and price_val: fiyat_bus = price_val
+                                    elif "EKONOM" in cabin_name or "PULMAN" in cabin_name or "STANDART" in cabin_name or "EKO" in cabin_name:
+                                        eko_koltuk += bos_koltuk_sayisi
+                                        if not fiyat_eko and price_val: fiyat_eko = price_val
+                                    else:
+                                        diger_koltuk += bos_koltuk_sayisi
 
                             toplam_kapasite = eko_koltuk + bus_koltuk + diger_koltuk
-                            
+
                             if toplam_kapasite >= yolcu_sayisi:
-                                # Kullanıcının butonlardan seçtiği vagon tipine göre eleme yapıyoruz
-                                if vagon_tipi == "Ekonomi" and eko_koltuk < yolcu_sayisi:
-                                    continue
-                                if vagon_tipi == "Business" and bus_koltuk < yolcu_sayisi:
-                                    continue
+                                if vagon_tipi != "Fark Etmez":
+                                    aranan_vagon = "Tek. Sandalye" if "Tekerlekl" in vagon_tipi else vagon_tipi
+                                    mevcut_koltuk = sinif_koltuk_sayilari.get(aranan_vagon, 0)
+                                    if mevcut_koltuk < yolcu_sayisi:
+                                        continue
 
                                 tren_adi = train.get("commercialName") or train.get("name", "Bilinmeyen Tren")
-                                
+
+                                final_fiyat = fiyat_eko if vagon_tipi == "Ekonomi" and fiyat_eko else fiyat_bus
+                                if not final_fiyat:
+                                    final_fiyat = fiyat_eko or fiyat_bus or "Bilgi Yok"
+
                                 saat = "00:00"
+                                varis_saat = "00:00"
                                 segments = train.get("segments", [])
                                 if segments:
                                     dep_time_ms = segments[0].get("departureTime")
                                     if dep_time_ms:
                                         dt_obj = datetime.fromtimestamp(dep_time_ms / 1000.0, tz=tz_tr)
                                         saat = dt_obj.strftime("%H:%M")
-                                
+                                    arv_time_ms = segments[-1].get("arrivalTime")
+                                    if arv_time_ms:
+                                        arv_obj = datetime.fromtimestamp(arv_time_ms / 1000.0, tz=tz_tr)
+                                        varis_saat = arv_obj.strftime("%H:%M")
+
                                 if not (baslangic_saati <= saat <= bitis_saati):
-                                    continue 
-                                
-                                # Telegram mesajına yansıyacak detaylı döküm: "35 (Eko: 35, Bus: 0)"
-                                koltuk_detay = f"{toplam_kapasite} (Eko: {eko_koltuk}, Bus: {bus_koltuk})"
-                                
+                                    continue
+
+                                detay_str = ", ".join([f"{isim}: {sayi}" for isim, sayi in sinif_koltuk_sayilari.items()])
+                                koltuk_detay = f"{toplam_kapasite} Boş Koltuk" if not detay_str else f"{toplam_kapasite} Boş Koltuk ({detay_str})"
+
                                 found_trains.append({
                                     "tren_tipi": tren_adi,
                                     "saat": saat,
+                                    "varis_saat": varis_saat,
+                                    "fiyat": final_fiyat,
                                     "bos_koltuk": koltuk_detay,
                                     "vagon_tipi": vagon_tipi
                                 })
-            
+
             return found_trains
 
         except Exception as e:

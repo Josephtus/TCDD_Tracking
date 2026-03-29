@@ -32,35 +32,53 @@ async def cmd_start(message: types.Message):
         await message.answer("Hoş geldin Patron! 🚂\nAlarmları görmek için /alarmlar\nYeni alarm için /yeni_alarm")
 
 async def check_all_active_alarms():
-    logging.info(f"[{datetime.now().strftime('%H:%M:%S')}] 🔄 Bilet kontrolü başlatıldı...")
-    
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(Task).where(Task.is_active == True))
         active_tasks = result.scalars().all()
-        
-    if not active_tasks: return
+
+    if not active_tasks:
+        return
 
     for task in active_tasks:
-        logging.info(f"Aranıyor: {task.kalkis_gar}-{task.varis_gar} | {task.baslangic_saati}-{task.bitis_saati}")
-        
-        # YENİ EKLENEN PARAMETRELERİ GÖNDERİYORUZ
         biletler = await check_train_tickets(
-            kalkis=task.kalkis_gar, 
-            varis=task.varis_gar, 
+            kalkis=task.kalkis_gar,
+            varis=task.varis_gar,
             tarih=task.tarih,
             baslangic_saati=task.baslangic_saati,
             bitis_saati=task.bitis_saati,
             yolcu_sayisi=task.yolcu_sayisi,
             vagon_tipi=task.vagon_tipi
         )
-        
+
         if biletler:
-            mesaj = f"🚨 <b>BİLET BULUNDU!</b> 🚨\n\n🚂 Rota: {task.kalkis_gar} - {task.varis_gar}\n📅 Tarih: {task.tarih}\n👥 İstenen: {task.yolcu_sayisi} Kişi ({task.vagon_tipi})\n\n"
+            mesaj = (
+                f"🚨 <b>BİLET BULUNDU!</b> 🚨\n━━━━━━━━━━━━━━━━\n"
+                f"📍 <b>Rota:</b> {task.kalkis_gar} ➔ {task.varis_gar}\n"
+                f"📅 <b>Tarih:</b> {task.tarih}\n"
+                f"👥 <b>İstenen:</b> {task.yolcu_sayisi} Kişi ({task.vagon_tipi})\n"
+                f"━━━━━━━━━━━━━━━━\n\n"
+            )
             for b in biletler:
-                mesaj += f"⏰ {b['saat']} | 🚆 {b['tren_tipi']} | 💺 {b['bos_koltuk']} Boş Koltuk\n"
-            
-            await bot.send_message(chat_id=ADMIN_TELEGRAM_ID, text=mesaj, parse_mode="HTML")
-            
+                fiyat_str = f"{b['fiyat']} ₺" if str(b['fiyat']).replace('.', '').isdigit() else str(b['fiyat'])
+                mesaj += f"🚆 <b>{b['tren_tipi']}</b>\n"
+                mesaj += f"🕒 {b['saat']} ➔ {b['varis_saat']}\n"
+                mesaj += f"💵 {fiyat_str}\n"
+                mesaj += f"💺 {b['bos_koltuk']}\n\n"
+
+            from aiogram.utils.keyboard import InlineKeyboardBuilder
+            builder = InlineKeyboardBuilder()
+            builder.button(text="⏸ Takibi Durdur", callback_data=f"toggle_{task.id}")
+            builder.button(text="✏️ Düzenle",       callback_data=f"edit_{task.id}")
+            builder.button(text="🗑️ Sil",          callback_data=f"delete_{task.id}")
+            builder.adjust(2, 1)
+
+            await bot.send_message(
+                chat_id=ADMIN_TELEGRAM_ID,
+                text=mesaj,
+                parse_mode="HTML",
+                reply_markup=builder.as_markup()
+            )
+
         await asyncio.sleep(3)
 
 async def main():
@@ -68,7 +86,7 @@ async def main():
     scheduler = AsyncIOScheduler()
     scheduler.add_job(check_all_active_alarms, 'interval', minutes=0.5)
     scheduler.start()
-    
+
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
