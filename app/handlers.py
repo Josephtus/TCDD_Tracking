@@ -248,21 +248,42 @@ async def show_kalkis(message_or_callback, state: FSMContext, is_edit_single=Fal
 
 @router.message(Command("yeni_alarm"))
 async def cmd_yeni_alarm(message: types.Message, state: FSMContext):
-    ok, _ = await check_access(message)
+    ok, user = await check_access(message)
     if not ok:
         return
+
+    # KULLANICI LİMİT KONTROLÜ
+    if not user.is_admin:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Task).where(Task.user_id == user.id))
+            task_count = len(result.scalars().all())
+            if task_count >= 3:
+                await message.answer(
+                    "❌ <b>Limit Doldu!</b>\nEn fazla 3 adet alarm kurabilirsiniz. Yeni bir alarm kurmak için lütfen /alarmlar menüsünden mevcut alarmlarınızdan birini silin.",
+                    parse_mode="HTML"
+                )
+                return
+
     await state.clear()
     await show_kalkis(message, state)
     
-# ----- AŞAĞIDAKİ BLOĞU YENİ EKLEYECEKSİN -----
 @router.callback_query(F.data == "start_yeni_alarm")
 async def cb_yeni_alarm(callback: types.CallbackQuery, state: FSMContext):
-    ok, _ = await check_access(callback) # check_access callback'leri de destekliyor
+    ok, user = await check_access(callback) 
     if not ok:
         return
+        
+    # KULLANICI LİMİT KONTROLÜ
+    if not user.is_admin:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(Task).where(Task.user_id == user.id))
+            task_count = len(result.scalars().all())
+            if task_count >= 3:
+                await callback.answer("❌ Limit Doldu! En fazla 3 adet alarm kurabilirsiniz.", show_alert=True)
+                return
+
     await state.clear()
     await show_kalkis(callback, state)
-# ---------------------------------------------
 
 @router.callback_query(F.data == "back_kalkis")
 async def back_kalkis(callback: types.CallbackQuery, state: FSMContext):
