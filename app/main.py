@@ -56,17 +56,17 @@ async def cmd_start(message: types.Message):
 
     # Admin ise direkt karşıla
     if str(tg_user.id) == ADMIN_TELEGRAM_ID:
-        await get_or_create_user(tg_user)   # DB'ye kaydet (ilk seferde)
+        await get_or_create_user(tg_user)
         
         builder = InlineKeyboardBuilder()
         builder.button(text="➕ Yeni Alarm Kur", callback_data="start_yeni_alarm")
         builder.button(text="📋 Alarmlarım", callback_data="alarmlar_menu")
-        builder.adjust(2) # Butonları yan yana dizer
+        builder.button(text="🛡️ Admin Paneli", callback_data="admin_login_info") # Yeni Buton
+        builder.adjust(2, 1) # İlk iki buton yan yana, Admin butonu altta tek
         
         await message.answer(
             "👋 <b>Hoş geldin Patron!</b> 🚂\n\n"
-            "Aşağıdaki butonları kullanarak işlemlerini hızlıca yapabilirsin.\n"
-            "<i>(Admin paneli için /admin_panel &lt;şifre&gt; komutunu kullanmaya devam edebilirsin)</i>",
+            "Aşağıdaki butonları kullanarak işlemlerini hızlıca yapabilirsin.",
             parse_mode="HTML",
             reply_markup=builder.as_markup()
         )

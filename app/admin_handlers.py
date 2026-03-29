@@ -13,6 +13,8 @@ import os
 import logging
 from aiogram import Router, F, types
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import select
 
@@ -49,27 +51,84 @@ def admin_dashboard_markup() -> types.InlineKeyboardMarkup:
 
 
 # ──────────────────────────────────────────────────────────
-# /admin_panel <şifre>
+# Şifre Bekleme Durumu (FSM)
 # ──────────────────────────────────────────────────────────
-@admin_router.message(Command("admin_panel"))
-async def cmd_admin_panel(message: types.Message):
-    if not is_admin(message.from_user.id):
-        await message.answer("⛔ Bu komuta erişim yetkiniz yok.")
+class AdminLogin(StatesGroup):
+    waiting_for_password = State()
+
+# ──────────────────────────────────────────────────────────
+# Butona Tıklanınca Şifre Sorma Ekranı
+# ──────────────────────────────────────────────────────────
+@admin_router.callback_query(F.data == "admin_login_info")
+async def ask_for_password(callback: types.CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Bu alana erişim yetkiniz yok.", show_alert=True)
         return
 
-    parts = message.text.split(maxsplit=1)
-    given_pass = parts[1].strip() if len(parts) > 1 else ""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="⬅️ İptal / Geri", callback_data="cancel_admin_login")
 
-    if given_pass != ADMIN_PASS:
-        await message.answer("🔐 Hatalı şifre. Kullanım: `/admin_panel <şifre>`", parse_mode="Markdown")
-        return
-
-    await message.answer(
-        "🛡️ <b>Admin Dashboard</b>\n"
-        "━━━━━━━━━━━━━━━━\n"
-        "Aşağıdaki menüden bir işlem seçin:",
+    # Eski mesajı güncelleyerek şifre sor
+    await callback.message.edit_text(
+        "🔐 <b>Admin Paneli Girişi</b>\n\n"
+        "Lütfen admin şifresini yazıp gönderin:",
         parse_mode="HTML",
-        reply_markup=admin_dashboard_markup(),
+        reply_markup=builder.as_markup()
+    )
+    # Botu şifre bekleme moduna al
+    await state.set_state(AdminLogin.waiting_for_password)
+
+# ──────────────────────────────────────────────────────────
+# Şifre Girildiğinde Çalışacak Kontrol
+# ──────────────────────────────────────────────────────────
+@admin_router.message(AdminLogin.waiting_for_password)
+async def check_password(message: types.Message, state: FSMContext):
+    # Kullanıcı şifreyi gönderdiğinde mesajını (güvenlik için) sil
+    try:
+        await message.delete()
+    except:
+        pass
+
+    if message.text.strip() == ADMIN_PASS:
+        await state.clear() # Doğruysa bekleme modundan çık
+        
+        await message.answer(
+            "🛡️ <b>Admin Dashboard</b>\n"
+            "━━━━━━━━━━━━━━━━\n"
+            "Aşağıdaki menüden bir işlem seçin:",
+            parse_mode="HTML",
+            reply_markup=admin_dashboard_markup(),
+        )
+    else:
+        # Yanlış şifre girilirse geri butonuyla tekrar uyar
+        builder = InlineKeyboardBuilder()
+        builder.button(text="⬅️ İptal / Geri", callback_data="cancel_admin_login")
+        
+        await message.answer(
+            "❌ <b>Hatalı şifre!</b> Lütfen tekrar deneyin:",
+            parse_mode="HTML",
+            reply_markup=builder.as_markup()
+        )
+
+# ──────────────────────────────────────────────────────────
+# İptal / Geri Butonu İşlemi
+# ──────────────────────────────────────────────────────────
+@admin_router.callback_query(F.data == "cancel_admin_login")
+async def cancel_login(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear() # Bekleme modunu iptal et
+    
+    # Ana menüyü tekrar oluştur ve göster
+    builder = InlineKeyboardBuilder()
+    builder.button(text="➕ Yeni Alarm Kur", callback_data="start_yeni_alarm")
+    builder.button(text="📋 Alarmlarım", callback_data="alarmlar_menu")
+    builder.button(text="🛡️ Admin Paneli", callback_data="admin_login_info")
+    builder.adjust(2, 1)
+
+    await callback.message.edit_text(
+        "👋 <b>Hoş geldin Patron!</b> 🚂\n\n"
+        "Aşağıdaki butonları kullanarak işlemlerini hızlıca yapabilirsin.",
+        parse_mode="HTML",
+        reply_markup=builder.as_markup()
     )
 
 
