@@ -122,7 +122,8 @@ async def cancel_login(callback: types.CallbackQuery, state: FSMContext):
     builder.button(text="➕ Yeni Alarm Kur", callback_data="start_yeni_alarm")
     builder.button(text="📋 Alarmlarım", callback_data="alarmlar_menu")
     builder.button(text="🛡️ Admin Paneli", callback_data="admin_login_info")
-    builder.adjust(2, 1)
+    builder.button(text="🧹 Sohbeti Temizle", callback_data="clear_chat") # Yeni Buton eklendi
+    builder.adjust(2, 1, 1)
 
     await callback.message.edit_text(
         "👋 <b>Hoş geldin Patron!</b> 🚂\n\n"

@@ -51,6 +51,9 @@ dp.include_router(router)
 # ──────────────────────────────────────────────────────────
 # /start — Kullanıcı kayıt & onay akışı
 # ──────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────
+# /start — Kullanıcı kayıt & onay akışı
+# ──────────────────────────────────────────────────────────
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
     tg_user = message.from_user
@@ -62,8 +65,9 @@ async def cmd_start(message: types.Message):
         builder = InlineKeyboardBuilder()
         builder.button(text="➕ Yeni Alarm Kur", callback_data="start_yeni_alarm")
         builder.button(text="📋 Alarmlarım", callback_data="alarmlar_menu")
-        builder.button(text="🛡️ Admin Paneli", callback_data="admin_login_info") # Yeni Buton
-        builder.adjust(2, 1) # İlk iki buton yan yana, Admin butonu altta tek
+        builder.button(text="🛡️ Admin Paneli", callback_data="admin_login_info")
+        builder.button(text="🧹 Sohbeti Temizle", callback_data="clear_chat") # Yeni Buton
+        builder.adjust(2, 1, 1) 
         
         await message.answer(
             "👋 <b>Hoş geldin Patron!</b> 🚂\n\n"
@@ -80,7 +84,8 @@ async def cmd_start(message: types.Message):
         builder = InlineKeyboardBuilder()
         builder.button(text="➕ Yeni Alarm Kur", callback_data="start_yeni_alarm")
         builder.button(text="📋 Alarmlarım", callback_data="alarmlar_menu")
-        builder.adjust(2) # Butonları yan yana dizer
+        builder.button(text="🧹 Sohbeti Temizle", callback_data="clear_chat") # Yeni Buton
+        builder.adjust(2, 1)
 
         await message.answer(
             "👋 <b>TCDD Takip Botuna Hoş Geldiniz!</b> 🚂\n\n"

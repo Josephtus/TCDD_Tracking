@@ -235,8 +235,13 @@ async def show_kalkis(message_or_callback, state: FSMContext, is_edit_single=Fal
     for s in ["ANKARA GAR", "ESKİŞEHİR", "ERYAMAN YHT", "İSTANBUL(SÖĞÜTLÜÇEŞME)", "İSTANBUL(PENDİK)"]:
         builder.button(text=s, callback_data=f"kalkis_{s}")
     builder.button(text="🔍 Diğer İstasyon...", callback_data="kalkis_diger")
+    
     if is_edit_single:
         builder.button(text="⬅️ Geri (Menü)", callback_data="back_to_edit_menu")
+    else:
+        # 1. Adımda işlemi iptal edip Ana Menüye dönmek için buton
+        builder.button(text="❌ İptal / Ana Menü", callback_data="cancel_to_main")
+        
     builder.adjust(1)
 
     text = "🚂 Kalkış garını seçin:"
@@ -507,6 +512,51 @@ async def show_saat_bitis(callback: types.CallbackQuery, state: FSMContext):
         reply_markup=generate_hours("end", min_hour=min_h, back_target="back_saat_start"),
         parse_mode="Markdown")
     await state.set_state(AlarmForm.saat_bitis)
+
+# ─────────────────────────────────────────────────────────────
+# ANA MENÜYE DÖNÜŞ VE SOHBET TEMİZLEME
+# ─────────────────────────────────────────────────────────────
+@router.callback_query(F.data == "cancel_to_main")
+async def cancel_to_main_menu(callback: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    ok, user = await check_access(callback)
+    if not ok:
+        return
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="➕ Yeni Alarm Kur", callback_data="start_yeni_alarm")
+    builder.button(text="📋 Alarmlarım", callback_data="alarmlar_menu")
+    
+    if user.is_admin:
+        builder.button(text="🛡️ Admin Paneli", callback_data="admin_login_info")
+        builder.button(text="🧹 Sohbeti Temizle", callback_data="clear_chat")
+        builder.adjust(2, 1, 1)
+    else:
+        builder.button(text="🧹 Sohbeti Temizle", callback_data="clear_chat")
+        builder.adjust(2, 1)
+
+    await callback.message.edit_text(
+        "👋 <b>Ana Menüye Döndünüz.</b> 🚂\n\n"
+        "Aşağıdaki menüden yapmak istediğiniz işlemi seçebilirsiniz:",
+        parse_mode="HTML",
+        reply_markup=builder.as_markup()
+    )
+
+
+@router.callback_query(F.data == "clear_chat")
+async def process_clear_chat(callback: types.CallbackQuery):
+    chat_id = callback.message.chat.id
+    current_msg_id = callback.message.message_id
+    
+    await callback.answer("🧹 Eski mesajlar temizleniyor...", show_alert=False)
+    
+    # Mevcut mesaj (Ana menü) hariç, ondan önceki son 80 mesajı silmeyi dener
+    for msg_id in range(current_msg_id - 1, max(0, current_msg_id - 80), -1):
+        try:
+            await callback.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+        except Exception:
+            # Mesaj zaten silinmiş veya 48 saatten eski olabilir, hatayı yoksay
+            pass
 
 @router.callback_query(AlarmForm.saat_baslangic, F.data.startswith("h_start_") | (F.data == "saat_tumgun"))
 async def process_saat_baslangic(callback: types.CallbackQuery, state: FSMContext):
